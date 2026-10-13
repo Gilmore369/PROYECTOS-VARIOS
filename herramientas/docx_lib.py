@@ -119,6 +119,123 @@ def resaltar_tramo(p_el, inicio, fin, color='yellow'):
             _set_highlight(r, color)
 
 
+def rangos_protegidos(p_el):
+    """Tramos [ini, fin) del texto que son resultado de un campo (citas, referencias, PAGEREF)."""
+    rangos, pos, prof, inicio = [], 0, 0, None
+    for el in p_el.iter():
+        if el.tag == W('fldChar'):
+            tipo = el.get(W('fldCharType'))
+            if tipo == 'begin':
+                if prof == 0:
+                    inicio = pos
+                prof += 1
+            elif tipo == 'end' and prof:
+                prof -= 1
+                if prof == 0:
+                    rangos.append((inicio, pos))
+        elif el.tag == W('t'):
+            pos += len(el.text or '')
+        elif el.tag in (W('tab'), W('br'), W('cr')):
+            pos += 1
+    return rangos
+
+
+def reemplazar_tramo(p_el, ini, fin, nuevo, color='cyan'):
+    """Reemplaza los caracteres [ini, fin) del párrafo por `nuevo` (fin == ini inserta)."""
+    for borde in (fin, ini):
+        for r, t_el, a, b in _runs_con_texto(p_el):
+            if a < borde < b:
+                _partir_run(r, t_el, borde - a)
+                break
+    runs = _runs_con_texto(p_el)
+    afectados = [(r, t_el) for r, t_el, a, b in runs if a >= ini and b <= fin and b > a]
+    if not afectados:
+        if not nuevo:
+            return True
+        # inserción: nuevo run después del que termina en `ini` (o antes del primero)
+        previo = [x for x in runs if x[3] == ini and x[3] > x[2]]
+        base, t_base = (previo[-1][0], previo[-1][1]) if previo else (runs[0][0], runs[0][1])
+        nuevo_run = copy.deepcopy(base)
+        for el in list(nuevo_run):
+            if el.tag != W('rPr'):
+                nuevo_run.remove(el)
+        t2 = nuevo_run.makeelement(W('t'), {})
+        t2.text = nuevo
+        t2.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+        nuevo_run.append(t2)
+        if color:
+            _set_highlight(nuevo_run, color)
+        if previo:
+            base.addnext(nuevo_run)
+        else:
+            base.addprevious(nuevo_run)
+        return True
+    primero, t_primero = afectados[0]
+    if nuevo:
+        t_primero.text = nuevo
+        t_primero.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+        if color:
+            _set_highlight(primero, color)
+        resto = afectados[1:]
+    else:
+        resto = afectados
+    for r, t_el in resto:
+        t_el.getparent().remove(t_el)
+        if not any(c.tag in (W('t'), W('tab'), W('br'), W('drawing'), W('fldChar'), W('instrText')) for c in r) \
+                and r.getparent() is not None:
+            r.getparent().remove(r)
+    return True
+
+
+_RX_TOK = re.compile(r'\s+|\w+|[^\w\s]', re.UNICODE)
+
+
+def aplicar_texto(p_el, nuevo, color='cyan', permitir_campos=False):
+    """Lleva el párrafo a `nuevo` cambiando solo las palabras distintas (resaltadas).
+
+    Las citas y demás campos de Word deben quedar idénticos en `nuevo`; si un
+    cambio los toca, lanza ValueError y no modifica nada.
+    Con `permitir_campos=True` se edita aunque el texto esté dentro del resultado
+    de un campo (útil cuando el autor escribió texto propio dentro de una cita).
+    Devuelve la lista de cambios [(antes, después)].
+    """
+    from difflib import SequenceMatcher
+    viejo = texto(p_el)
+    if viejo == nuevo:
+        return []
+    ta, tb = _RX_TOK.findall(viejo), _RX_TOK.findall(nuevo)
+    oa = [0]
+    for t in ta:
+        oa.append(oa[-1] + len(t))
+    ops = []
+    for op, a1, a2, b1, b2 in SequenceMatcher(None, ta, tb, autojunk=False).get_opcodes():
+        if op != 'equal':
+            ops.append([oa[a1], oa[a2], ''.join(tb[b1:b2])])
+    # unir cambios separados solo por un espacio para resaltar frases completas
+    unidos = []
+    for o in ops:
+        if unidos and viejo[unidos[-1][1]:o[0]].isspace() and o[0] - unidos[-1][1] <= 1:
+            unidos[-1] = [unidos[-1][0], o[1], unidos[-1][2] + viejo[unidos[-1][1]:o[0]] + o[2]]
+        else:
+            unidos.append(o)
+    prot = [] if permitir_campos else [(a, b) for a, b in rangos_protegidos(p_el) if b > a]
+    # una inserción justo al final de un campo quedaría dentro del resultado del campo:
+    # se absorbe el carácter siguiente para que el texto nuevo vaya después del campo
+    for o in unidos:
+        if o[0] == o[1] and any(o[0] == pb for _, pb in prot) and o[1] < len(viejo):
+            o[1] += 1
+            o[2] = o[2] + viejo[o[0]]
+    for a, b, _ in unidos:
+        for pa, pb in prot:
+            if (a < pb and b > pa) or (a == b and pa < a < pb):
+                raise ValueError(f'el cambio toca un campo/cita: {viejo[pa:pb]!r}')
+    for a, b, s in reversed(unidos):
+        reemplazar_tramo(p_el, a, b, s, color=color if s.strip() else None)
+    if texto(p_el) != nuevo:
+        raise RuntimeError('el texto resultante no coincide con el esperado')
+    return [(viejo[a:b], s) for a, b, s in unidos]
+
+
 def reemplazar(p_el, viejo, nuevo, color='cyan', ocurrencia=0):
     """Reemplaza `viejo` por `nuevo` dentro del párrafo, aunque cruce varios runs.
 

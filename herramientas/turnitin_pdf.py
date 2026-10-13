@@ -13,9 +13,6 @@ import sys
 
 import pymupdf
 
-PORTADA = ('Descripción general de integridad', 'Integrity Overview', 'Detalles del documento',
-           'Document Details', 'Fuentes principales', 'Top Sources', 'Bloques de texto excluidos')
-
 
 def _es_tinte(f):
     """Color claro de sombreado (no blanco ni gris)."""
@@ -43,10 +40,28 @@ def _cerca(c1, c2):
 TIPOS = ('Internet', 'Publicación', 'Trabajos del estudiante', 'Publication', 'Student papers', 'Submitted works')
 
 
+def _es_resumen(txt):
+    """Portada, resumen y lista de fuentes (no es el cuerpo del documento)."""
+    if re.search(r'Página \d+ de \d+ - (Portada|Descripción general|Integrity Overview|Cover Page)', txt):
+        return True
+    return _es_lista_fuentes(txt)
+
+
 def _es_lista_fuentes(txt):
-    lineas = [ln.strip() for ln in txt.split('\n') if ln.strip()]
+    lineas = _unir_tipos([ln.strip() for ln in txt.split('\n') if ln.strip()])
     n = sum(1 for k in range(len(lineas) - 1) if re.fullmatch(r'\d{1,3}', lineas[k]) and lineas[k + 1] in TIPOS)
     return n >= 3
+
+
+def _unir_tipos(lineas):
+    """Junta 'Trabajos del' + 'estudiante' partidos en dos líneas."""
+    out = []
+    for ln in lineas:
+        if out and out[-1] == 'Trabajos del' and ln == 'estudiante':
+            out[-1] = 'Trabajos del estudiante'
+        else:
+            out.append(ln)
+    return out
 
 
 def leer_fuentes(doc):
@@ -54,7 +69,7 @@ def leer_fuentes(doc):
     fuentes = {}
     tipos = TIPOS
     for p in doc:
-        lineas = [ln.strip() for ln in p.get_text().split('\n') if ln.strip()]
+        lineas = _unir_tipos([ln.strip() for ln in p.get_text().split('\n') if ln.strip()])
         for k, ln in enumerate(lineas):
             if re.fullmatch(r'\d{1,3}', ln) and k + 2 < len(lineas) and lineas[k + 1] in tipos:
                 nombre, pct = [], ''
@@ -74,7 +89,7 @@ def extraer(ruta):
     total_palabras = marcadas = 0
     for np, p in enumerate(doc):
         txt = p.get_text()
-        if (any(m in txt for m in PORTADA) and np < 5) or _es_lista_fuentes(txt):
+        if _es_resumen(txt):
             continue
         tintes, etiquetas = [], []
         for g in p.get_drawings():

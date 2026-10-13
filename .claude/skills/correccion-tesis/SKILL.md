@@ -26,7 +26,14 @@ Nunca trabajes sobre el original: copia a `salida/` con otro nombre.
 ```bash
 python herramientas/turnitin_pdf.py entrada/reporte.pdf salida/turnitin.json
 python herramientas/mapear_turnitin.py entrada/tesis.docx entrada/reporte.pdf salida/<nombre>
+python herramientas/marcado_por_palabra.py entrada/tesis.docx entrada/reporte.pdf salida/marcado.json
 ```
+
+`marcado_por_palabra.py` alinea palabra por palabra el PDF con el Word: da el
+% sombreado de cada párrafo (debe coincidir con el % de Turnitin) y es la base
+para estimar cuánto baja la similitud. Úsalo para repartir el esfuerzo:
+referencias, títulos, índices y cronograma no se parafrasean (sugerir excluir
+bibliografía y coincidencias pequeñas en la configuración de Turnitin).
 
 - `<nombre>_sombreado.docx`: el Word con cada coincidencia resaltada (un color
   por fuente) — es el "PDF Turnitin pasado a Word".
@@ -60,6 +67,21 @@ Reglas duras:
   El objetivo es que el texto quede bien escrito y bien citado.
 
 ## 3. Edición del Word
+
+Forma recomendada: escribir `trabajos/<nombre>/cambios.py` con
+`NUEVOS = {índice: 'párrafo nuevo completo'}` y aplicarlo:
+
+```bash
+python herramientas/aplicar_cambios.py entrada/tesis.docx cambios.py salida/<nombre>_corregido.docx salida/marcado.json
+```
+
+Solo se resaltan en cian las palabras que cambian, las citas de Word (campos)
+no se tocan (si un cambio las toca, da error y no se aplica) y al final estima
+la similitud restante. Antes de redactar, lista los campos de cada párrafo con
+`rangos_protegidos()` para dejar las citas idénticas. Los párrafos con texto
+propio escrito dentro de una cita van en `CAMPOS_EDITABLES`.
+
+Edición puntual directa:
 
 ```python
 import docx
